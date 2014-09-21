@@ -66,8 +66,9 @@ if [[ $# -eq 0 ]] || [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then
 fi
 
 ####################################################################################################
-# initialise default port forwards
-#get random seed from input arguments to always get same "random" ports for jump
+# initialise the semi-random generator.
+# get random seed from input arguments to always get same "random" ports for jump
+
 randports=()
 randcount=0
 randport=0
@@ -97,15 +98,21 @@ function nextrandport()
 
 ####################################################################################################
 
+# first server we're jumping to?
 first=true
+# second server we're jumping to?
 second=true
+# print or execute final command?
 onlyecho=false
-
+# contains all port forwards
 forwards=()
+# contains all hosts we're jumping to
 hosts=()
-
+# final command we're building
 cmd=""
+# extra ssh arguments we need to add to each ssh command
 sshargs=""
+# the command to run instead of a login shell
 remotecmd=""
 
 # repeat until all arguments have been popped
@@ -175,26 +182,11 @@ do
 			echo "Only one --exec command must be specified"
 			exit 100
 		fi
-		# if [[ "$localcmd" != "" ]]; then
-		# 	echo "--remote and --local cannot be used at the same time"
-		# 	exit 100
-		# fi
 
 		shift
 		remotecmd=" $1"
 		shift
 		continue
-	# elif [[ "$1" == "--local" ]] ; then
-	# 	if [[ "$remotecmd" != "" ]]; then
-	# 		echo "--remote and --local cannot be used at the same time"
-	# 		exit 100
-	# 	fi
-
-	# 	shift
-	# 	localcmd=" $1"
-	# 	shift
-	# 	continue
-	# todo: do we want to forward ssh arguments?
 	elif [ ${1:0:1} = "-" ]; then
 		# this is a different argument, that we want passed to EVERY ssh connection
 		sshargs+=" $1"
