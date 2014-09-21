@@ -3,10 +3,10 @@
 ####################################################################################################
 # Help message
 
-if [[ $# -eq 0 ]] || [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then
-	echo "                                                                                "
+if [[ $# -eq 0 ]] || [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then	
 	echo "jumpssh [--echo] [--exec command] [-h] [--help] [-L port:[intport:]hostport]"
-	echo "[-R port:[intport:]hostport] -???"
+	echo "[-R port:[intport:]hostport] [-???] [user@]hostname[:port]"
+	echo "[user@]hostname[:port] [user@]hostname[:port] ..."
 	echo "
 	[user@]hostname1"
 	echo "        [[user@]hostname2] ... [[user@]hostnameN"
@@ -31,11 +31,11 @@ if [[ $# -eq 0 ]] || [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then
 		echo "                              $hostport on the client. Otherwise works as -L"
 		echo "  -???                        All other flags (beginning with a dash) are"
 		echo "                              applied to every ssh 'jump' command generated."
-		echo "  [user@]hostname [...]   Host(s) to connect to/through. Will do a \"jump\""
-		echo "                          to the next server specified, until connecting to the"
-		echo "                          last host in the list"
-		echo ""
-		echo "                          All flags must be specified before host names"
+		echo "  [user@]hostname[:port]      Host(s) to connect to/through. Will do a \"jump\""
+		echo "                              to the next server specified, until connecting to"
+		echo "                              the last host in the list"
+		echo ""	
+		echo "Examples:"
 		echo ""
 		echo "Create an ssh connection to a host through other hosts, and set up ssh port"
 		echo "forwards from source to target and back"
