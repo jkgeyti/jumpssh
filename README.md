@@ -20,7 +20,7 @@ jumpssh bob@gateway.domain.com:2222 clusteruser@clustergateway clusternode
     
 ```bash
 # Report clusternode disk space usage
-jumpssh -L 2222:22 bob@gateway clustergateway clusternode --exec "df -h"
+jumpssh bob@gateway clustergateway clusternode --exec "df -h"
 ````
 
 #### Share ports between your client and innermost ssh server:
@@ -53,5 +53,6 @@ Don't rely on jumpssh directly, but use it to build complex ssh forwards for you
 ```bash
 # Forward some ports from clusternode to client, and some from client to clusternode.
 # Only don't actually execute it, but print the ssh command required to do so.
-jumpssh --echo -L 22:2222 -L 81:81 -R 8080:8080 bob@gateway clustergateway clusternode
+user@mycomputer:~ $ jumpssh --echo -L 22:2222 -L 81:81 -R 8080:8080 bob@gateway clustergateway clusternode
+ssh -t -p 22 -L 22:localhost:35929 -L 81:localhost:30808 -R 35673:localhost:8080 bob@gateway ssh -t -p 22 -L 35929:localhost:35929 -L 30808:localhost:30808 -R 35673:localhost:35673 clustergateway "ssh -t -p 22 -L 35929:localhost:2222 -L 30808:localhost:81 -R 8080:localhost:35673 clusternode"
 ```
