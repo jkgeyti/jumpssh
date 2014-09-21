@@ -1,0 +1,315 @@
+#!/usr/bin/env bash
+
+####################################################################################################
+# Help message
+
+if [[ $# -eq 0 ]] || [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then
+	echo "                                                                                "
+	echo "jumpssh [--echo] [--exec command] [-h] [--help] [-L port:[intport:]hostport]"
+	echo "[-R port:[intport:]hostport] -???"
+	echo "
+	[user@]hostname1"
+	echo "        [[user@]hostname2] ... [[user@]hostnameN"
+	if [[ $# -gt 0 ]]; then
+		echo "Usage:"
+		echo "jumpssh"
+		echo "  --echo                      Print the generated ssh command instead of"
+		echo "                              executing it"
+		echo "  --exec command              Execute command on remote server instead of a"
+		echo "                              login shell"
+		echo "  -h --help                   This help screen"
+		echo "  -L port:[intport:]hostport  Traffic on client port $port is forwarded to port"
+		echo "                              $hostport on the remote. If connecting through"
+		echo "                              intermediate hosts, port $intport is used as the"
+		echo "                              intermediate port to forward the connection"
+		echo "                              through. If $intport is unspecified, a random port"
+		echo "                              will be used. The same ports is used on"
+		echo "                              consecutive invocations of the same jumpssh"
+		echo "                              command, as command line arguments are used to"
+		echo "                              seed the random generator" 
+		echo "  -R port:intport:hostport    Traffic on remote port $port is forwarded to port"
+		echo "                              $hostport on the client. Otherwise works as -L"
+		echo "  -???                        All other flags (beginning with a dash) are"
+		echo "                              applied to every ssh 'jump' command generated."
+		echo "  [user@]hostname [...]   Host(s) to connect to/through. Will do a \"jump\""
+		echo "                          to the next server specified, until connecting to the"
+		echo "                          last host in the list"
+		echo ""
+		echo "                          All flags must be specified before host names"
+		echo ""
+		echo "Create an ssh connection to a host through other hosts, and set up ssh port"
+		echo "forwards from source to target and back"
+		echo ""
+		echo "Examples:"
+		echo ""
+		echo "jumpssh -L 2222:22 user@hostname"
+		echo "  connects to hostname. Remote (hostname) port 22 will be accessible from"
+		echo "  client machine through port 2222."
+		echo ""
+		echo "jumpssh -L 2222:22 -R 2223:22 user@host1 host2 host3 host4"
+		echo "  connects to host4 through host1, 2 and 3. Client port 22 will be accessible"
+		echo "  from host4 through port 2223, and host4 port 22 will be accessible from the"
+		echo "  client through port 22. The ports are forwarded through random ports on"
+		echo "  host 2 and 3"
+		echo ""
+		echo "jumpssh -L 8080:8181:80 user@host1 host2"
+		echo "  connects to host2 through host1. host2 port 80 will be available on"
+		echo "  client port 8080. host1 port 8181 is used as the intermediate port for this"
+		echo "  port forward."
+		echo ""
+		echo "Note that the \"randomly\" assigned ports will always be the same for the same"
+		echo "command. 'jumpssh -L 2222:22 user@hostname' will use the same random ports"
+		echo "upon every invocation, as the random generator is seeded using the jumpssh"
+		echo "arguments"
+	fi
+	exit 0
+fi
+
+####################################################################################################
+# initialise default port forwards
+#get random seed from input arguments to always get same "random" ports for jump
+randports=()
+randcount=0
+randport=0
+
+function initrand()
+{
+	n=$(md5sum <<< $@)	
+	RANDOM=$((0x${n%% *}))
+	temprand=()
+
+	# get a bunch of random unique port numbers
+	for (( i=1;i<=50;i++ )); do 
+		temprand+=("$(( ( RANDOM % 9998 ) + 30000 )) ")
+	done
+	# remove duplicates and save the list of ports in global scope
+	for r in $(for r in ${temprand[@]}; do echo $r; done | awk ' !x[$0]++'); do
+		randports+=("$r")
+	done
+}
+initrand "$@"
+
+function nextrandport()
+{
+	randport=${randports[$randcount]}
+	randcount=$(($randcount+1)) 
+}
+
+####################################################################################################
+
+first=true
+second=true
+onlyecho=false
+
+forwards=()
+hosts=()
+
+cmd=""
+sshargs=""
+remotecmd=""
+
+# repeat until all arguments have been popped
+while test $# -gt 0
+do
+
+	# is this a port spec argument?
+	if [[ "$1" == "-L" ]] || [[ "$1" == "-R" ]] ; then				
+
+		#get forward request
+		if [ "$1" == "-L" ] ; then
+			forwardtype="L"
+		elif [ "$1" == "-R" ] ; then
+			forwardtype="R"
+		fi
+		
+		# next argument must be the port number(s)
+		shift
+		ports=($(echo $1 | tr ":" " "))
+		portslen=${#ports[@]}
+
+		# port array contains one of these combinations:
+		# [ sourceport, intermediateport, destinationport]
+		# [ sourceport, destinationport]
+		# [ sourceport]
+
+		# start by setting some default ports, for the ones
+		# the user hasn't explicitely stated
+		nextrandport
+		left=$randport
+		nextrandport
+		mid=$randport
+		nextrandport
+		right=$randport
+
+		# overwrite the ports with the ones the user has specified				
+		if [[ $portslen > 0 ]] ; then
+			# left hand port is set
+			right=${ports[0]}
+		fi
+		if [[ $portslen == 1 ]] ; then
+			# user is not allowed to only specified target port
+			echo "Invalid port forward specifed. Must be \$port:\$hostport or \$port:\$intermediateport:\$hostport"
+			exit 100
+		elif [[ $portslen == 2 ]] ; then				
+			# right hand port is set
+			left=${ports[0]}
+			right=${ports[1]}
+		elif [[ $portslen == 3 ]] ; then
+			# mid and right hand port is set.
+			left=${ports[0]}
+			mid=${ports[1]}
+			right=${ports[2]}
+		fi
+
+		forwards+=("$forwardtype:$left:$mid:$right")
+
+		#pop the ports argument and continue parsing arguments
+		shift
+		continue	
+	elif [[ "$1" == "--echo" ]] ; then				
+		onlyecho=true
+		shift
+		continue	
+	elif [[ "$1" == "--exec" ]] ; then
+		if [[ "$remotecmd" != "" ]]; then
+			echo "Only one --exec command must be specified"
+			exit 100
+		fi
+		# if [[ "$localcmd" != "" ]]; then
+		# 	echo "--remote and --local cannot be used at the same time"
+		# 	exit 100
+		# fi
+
+		shift
+		remotecmd=" $1"
+		shift
+		continue
+	# elif [[ "$1" == "--local" ]] ; then
+	# 	if [[ "$remotecmd" != "" ]]; then
+	# 		echo "--remote and --local cannot be used at the same time"
+	# 		exit 100
+	# 	fi
+
+	# 	shift
+	# 	localcmd=" $1"
+	# 	shift
+	# 	continue
+	# todo: do we want to forward ssh arguments?
+	elif [ ${1:0:1} = "-" ]; then
+		# this is a different argument, that we want passed to EVERY ssh connection
+		sshargs+=" $1"
+		shift
+		continue
+	else
+		# otherwise, it should be a hostname, parse it
+		hostport=($(echo $1 | tr ":" " "))
+		host=${hostport[0]}
+		if [ ${#hostport[@]} = 2 ]; then
+			portarg="${hostport[1]}"
+		else
+			# no explicit host port specified, so use an empty string for the -p argument
+			portarg="22"
+		fi
+		hosts+=("$host:$portarg")
+
+		shift
+		continue
+	fi
+done
+
+# we've parsed all arguments, now construct the ssh command
+
+hostslen=${#hosts[*]}
+for hostport in ${hosts[@]}; do
+
+	hostport=($(echo $hostport | tr ":" " "))
+	host=${hostport[0]}
+	port=${hostport[1]}
+
+	forwardfailure=""
+
+	forwardarg=""
+	for forward in ${forwards[@]}; do
+		forward=($(echo $forward | tr ":" " "))		
+		
+		porttype=${forward[0]}
+		left=${forward[1]}
+		mid=${forward[2]}
+		right=${forward[3]}
+
+		# by default, we'll forward a port to the intermediate port
+		# but if we're connecting to the last server, then we need to set dest
+		# to the actual destination port we want 
+		if [ "$hostslen" = "1" ]; then
+			ldest=$right
+			rdest=$left
+		else
+			ldest=$mid
+			rdest=$mid
+		fi
+
+		# first and second ssh command has slightly different syntax, 3th to nth have similar syntax
+		if [ "$first" = true ]; then
+			if [[ "$porttype" = "L" ]]; then
+				arg="-L $left:localhost:$ldest"
+			elif [[ "$porttype" = "R" ]]; then
+				arg="-R $rdest:localhost:$right"
+			fi
+		elif [ "$second" = true ]; then
+			if [[ "$porttype" = "L" ]]; then
+				arg="-L $mid:localhost:$ldest"
+			elif [[ "$forwardtype" = "R" ]]; then
+				arg="-R $rdest:localhost:$mid"
+			fi
+		else
+			if [[ "$porttype" = "L" ]]; then
+				arg="-L $mid:localhost:$ldest"
+			elif [[ "$porttype" = "R" ]]; then
+				arg="-R $rdest:localhost:$mid"
+			fi
+		fi
+
+		forwardarg+="$arg "
+	done
+
+	# if user isn't running a command, then create a pseudo terminal
+	#if [[ "$remotecmd" == "" ]] && [[ "$localcmd" == "" ]]; then
+	if [[ "$remotecmd" == "" ]] ; then
+		termarg="-t"
+	else
+		termarg=""
+
+		# let the connection die if we're expected to run a command
+		# this, however, should only be set on the first connect
+		if [ "$first" = true ]; then
+			forwardfailure="-o ExitOnForwardFailure=yes"
+		fi
+	fi
+
+	# build command
+	thiscmd="ssh $forwardfailure $termarg $sshargs -p $port $forwardarg $host"
+
+	# add remote command if this is the last jump
+	if [ "$hostslen" = "1" ] && [[ $remotecmd != "" ]]; then
+		thiscmd+=" $remotecmd"
+	fi
+
+	if [ "$first" = true ]; then
+		first=false
+		cmd+="$thiscmd"
+	elif [ "$second" = true ]; then
+		second=false
+		cmd+=" $thiscmd"
+	else		
+		cmd+=" \"$thiscmd\""
+	fi	
+
+	hostslen=$((hostslen - 1))
+
+done
+
+if [ "$onlyecho" = true ]; then
+	echo $cmd
+else	
+	$cmd
+fi
